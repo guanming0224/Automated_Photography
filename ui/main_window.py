@@ -1,6 +1,7 @@
 """主窗口邏輯模組"""
 import os
 import cv2
+import re
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QSpinBox, QFileDialog, QSplitter,
@@ -8,16 +9,42 @@ from PySide6.QtWidgets import (
     QScrollArea, QGridLayout,
 )
 from PySide6.QtGui import QPixmap, QImage
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QThread, QTimer, Qt, Signal
 
 from core.camera import CameraThread, find_available_cameras
 from core.config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, CONTROL_PANEL_WIDTH, PREVIEW_PANEL_WIDTH,
     MAX_CAMERAS, DEFAULT_PHOTO_COUNT, DEFAULT_INTERVAL,
     MIN_PHOTO_COUNT, MAX_PHOTO_COUNT, MIN_INTERVAL, MAX_INTERVAL,
-    DEFAULT_NAME_TEMPLATE, PREVIEW_GRID_COLUMNS,
+    DEFAULT_NAME_TEMPLATE, PREVIEW_GRID_COLUMNS, CAPTURE_TIMEOUT_MS,
 )
 from ui.widgets import CameraCard, CircularProgressWidget
+
+
+class SaveBatchThread(QThread):
+    save_finished = Signal(int, list, list)
+
+    def __init__(self, capture_id, items, parent=None):
+        super().__init__(parent)
+        self.capture_id = capture_id
+        self.items = items
+
+    def run(self):
+        successes = []
+        errors = []
+        for item in self.items:
+            frame = CameraThread.crop_to_aspect(item["frame"], 16, 9)
+            ok = cv2.imwrite(item["path"], frame)
+            if ok:
+                successes.append({
+                    "camera": item["camera"],
+                    "path": item["path"],
+                    "frame": frame,
+                    "timestamp": item["timestamp"],
+                })
+            else:
+                errors.append(f"相機 {item['camera']} 存檔失敗：{item['path']}")
+        self.save_finished.emit(self.capture_id, successes, errors)
 
 
 class AutoCameraGUI(QMainWindow):
@@ -36,10 +63,18 @@ class AutoCameraGUI(QMainWindow):
         self.selected_cameras = []
         self.countdown_timer = QTimer()
         self.countdown_timer.timeout.connect(self.update_countdown)
+        self.capture_timeout_timer = QTimer()
+        self.capture_timeout_timer.setSingleShot(True)
+        self.capture_timeout_timer.timeout.connect(self._handle_capture_timeout)
         self.current_cycle = 0
         self.total_cycles = 0
         self.total_photos = 0
         self.saved_photos = 0
+        self.capture_sequence = 0
+        self.pending_capture_id = None
+        self.pending_capture_results = {}
+        self.pending_capture_expected = set()
+        self.save_threads = []
         self.interval = 0
         self.countdown_value = 0
         self.is_paused = False
@@ -170,6 +205,7 @@ class AutoCameraGUI(QMainWindow):
         for cam_idx in self.cameras:
             thread = CameraThread(cam_idx)
             thread.frame_ready.connect(self._dispatch_preview)
+            thread.capture_ready.connect(self._handle_capture_frame)
             thread.start()
             self.camera_threads.append(thread)
             self.camera_threads_by_index[cam_idx] = thread
@@ -256,6 +292,10 @@ class AutoCameraGUI(QMainWindow):
     def stop_capture(self):
         """結束拍攝"""
         self.countdown_timer.stop()
+        self.capture_timeout_timer.stop()
+        self.pending_capture_id = None
+        self.pending_capture_expected = set()
+        self.pending_capture_results = {}
         self.is_paused = False
         self.is_running = False
         self.start_button.setEnabled(True)
@@ -271,35 +311,130 @@ class AutoCameraGUI(QMainWindow):
             return
 
         self.current_cycle += 1
-        for cam in self.selected_cameras:
-            thread = self.camera_threads_by_index.get(cam)
-            frame = thread.get_latest_frame() if thread is not None else None
-            if frame is None:
-                continue
+        self.capture_sequence += 1
+        self.pending_capture_id = self.capture_sequence
+        self.pending_capture_results = {}
+        self.pending_capture_expected = set(self.selected_cameras)
 
-            cropped = CameraThread.crop_to_aspect(frame, 16, 9)
-            try:
-                filename = self.name_template.format(camera=cam, index=self.current_cycle)
-            except Exception:
-                filename = f"cam{cam}_{self.current_cycle:04d}.jpg"
-
-            filepath = os.path.join(self.save_path, filename)
-            cv2.imwrite(filepath, cropped)
-            self.saved_photos += 1
-
-            rgb_image = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb_image.shape
-            qt_image = QImage(rgb_image.data, w, h, ch * w, QImage.Format_RGB888)
-            pixmap = QPixmap.fromImage(qt_image)
-            if cam in self.camera_cards:
-                self.camera_cards[cam].update_last_photo(pixmap)
-
-        self.circular_progress.setPhotoProgress(self.saved_photos, self.total_photos)
         self.circular_progress.setStatusText(
-            f"拍攝 {self.saved_photos}/{self.total_photos}", "倒數 0s"
+            f"拍攝 {self.saved_photos}/{self.total_photos}",
+            f"第 {self.current_cycle}/{self.total_cycles} 輪"
         )
 
-        if self.current_cycle < self.total_cycles:
+        for cam in self.selected_cameras:
+            thread = self.camera_threads_by_index.get(cam)
+            if thread is None:
+                self.pending_capture_expected.discard(cam)
+                continue
+            thread.request_capture(self.pending_capture_id)
+
+        if not self.pending_capture_expected:
+            self._finalize_pending_capture(["沒有可用的相機執行緒。"])
+            return
+
+        self.capture_timeout_timer.start(CAPTURE_TIMEOUT_MS)
+
+    def _handle_capture_frame(self, camera_index, capture_id, frame, timestamp):
+        if capture_id != self.pending_capture_id:
+            return
+        if camera_index not in self.pending_capture_expected:
+            return
+
+        self.pending_capture_results[camera_index] = {
+            "frame": frame,
+            "timestamp": timestamp,
+        }
+
+        if set(self.pending_capture_results) >= self.pending_capture_expected:
+            self._finalize_pending_capture([])
+
+    def _handle_capture_timeout(self):
+        if self.pending_capture_id is None:
+            return
+        missing = sorted(self.pending_capture_expected - set(self.pending_capture_results))
+        errors = [f"相機 {cam} 拍攝逾時。" for cam in missing]
+        self._finalize_pending_capture(errors)
+
+    def _finalize_pending_capture(self, errors):
+        if self.pending_capture_id is None:
+            return
+
+        self.capture_timeout_timer.stop()
+        capture_id = self.pending_capture_id
+        capture_items = self._build_capture_items()
+
+        self.pending_capture_id = None
+        self.pending_capture_expected = set()
+        self.pending_capture_results = {}
+
+        if not capture_items:
+            self._on_save_batch_finished(capture_id, [], errors)
+            return
+
+        save_thread = SaveBatchThread(capture_id, capture_items, self)
+        save_thread.save_finished.connect(
+            lambda finished_id, successes, save_errors, initial_errors=errors:
+                self._on_save_batch_finished(
+                    finished_id,
+                    successes,
+                    initial_errors + save_errors,
+                )
+        )
+        save_thread.finished.connect(lambda thread=save_thread: self._remove_save_thread(thread))
+        self.save_threads.append(save_thread)
+        save_thread.start()
+
+    def _build_capture_items(self):
+        items = []
+        reserved_paths = set()
+        for cam, result in sorted(self.pending_capture_results.items()):
+            path = self._make_photo_path(cam, self.current_cycle, reserved_paths)
+            reserved_paths.add(path)
+            items.append({
+                "camera": cam,
+                "path": path,
+                "frame": result["frame"],
+                "timestamp": result["timestamp"],
+            })
+        return items
+
+    def _make_photo_path(self, camera_index, photo_index, reserved_paths):
+        try:
+            filename = self.name_template.format(camera=camera_index, index=photo_index)
+        except Exception:
+            filename = f"cam{camera_index}_{photo_index:04d}.jpg"
+
+        filename = os.path.basename(filename.strip())
+        filename = re.sub(r'[<>:"/\\|?*]', "_", filename)
+        if not filename:
+            filename = f"cam{camera_index}_{photo_index:04d}.jpg"
+        root, ext = os.path.splitext(filename)
+        if not ext:
+            ext = ".jpg"
+        path = os.path.join(self.save_path, root + ext)
+        suffix = 1
+        while path in reserved_paths or os.path.exists(path):
+            path = os.path.join(self.save_path, f"{root}_{suffix:03d}{ext}")
+            suffix += 1
+        return path
+
+    def _on_save_batch_finished(self, capture_id, successes, errors):
+        for item in successes:
+            self.saved_photos += 1
+            rgb_image = cv2.cvtColor(item["frame"], cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            qt_image = QImage(rgb_image.data, w, h, ch * w, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(qt_image.copy())
+            card = self.camera_cards.get(item["camera"])
+            if card:
+                card.update_last_photo(pixmap)
+
+        self.circular_progress.setPhotoProgress(self.saved_photos, self.total_photos)
+
+        if errors:
+            QMessageBox.warning(self, "拍攝或存檔異常", "\n".join(errors[:8]))
+
+        if self.current_cycle < self.total_cycles and self.is_running:
             self.countdown_value = self.interval
             self.circular_progress.setCountdown(self.countdown_value, self.interval)
             self.circular_progress.setStatusText(
@@ -310,9 +445,17 @@ class AutoCameraGUI(QMainWindow):
         else:
             self.finish_capture()
 
+    def _remove_save_thread(self, thread):
+        if thread in self.save_threads:
+            self.save_threads.remove(thread)
+
     def finish_capture(self):
         """完成拍攝"""
         self.countdown_timer.stop()
+        self.capture_timeout_timer.stop()
+        self.pending_capture_id = None
+        self.pending_capture_expected = set()
+        self.pending_capture_results = {}
         self.is_running = False
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
