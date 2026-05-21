@@ -4,7 +4,7 @@ import cv2
 import re
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QLineEdit, QSpinBox, QFileDialog, QSplitter,
+    QPushButton, QLineEdit, QSpinBox, QDoubleSpinBox, QFileDialog, QSplitter,
     QGroupBox, QFormLayout, QCheckBox, QMessageBox,
     QScrollArea, QGridLayout,
 )
@@ -17,6 +17,7 @@ from core.config import (
     MAX_CAMERAS, DEFAULT_PHOTO_COUNT, DEFAULT_INTERVAL,
     MIN_PHOTO_COUNT, MAX_PHOTO_COUNT, MIN_INTERVAL, MAX_INTERVAL,
     DEFAULT_NAME_TEMPLATE, PREVIEW_GRID_COLUMNS, CAPTURE_TIMEOUT_MS,
+    INTERVAL_STEP, COUNTDOWN_TICK_MS,
 )
 from ui.widgets import CameraCard, CircularProgressWidget
 
@@ -127,8 +128,11 @@ class AutoCameraGUI(QMainWindow):
         self.photo_count_spin = QSpinBox()
         self.photo_count_spin.setRange(MIN_PHOTO_COUNT, MAX_PHOTO_COUNT)
         self.photo_count_spin.setValue(DEFAULT_PHOTO_COUNT)
-        self.interval_spin = QSpinBox()
+        self.interval_spin = QDoubleSpinBox()
         self.interval_spin.setRange(MIN_INTERVAL, MAX_INTERVAL)
+        self.interval_spin.setDecimals(2)
+        self.interval_spin.setSingleStep(INTERVAL_STEP)
+        self.interval_spin.setSuffix(" s")
         self.interval_spin.setValue(DEFAULT_INTERVAL)
         capture_layout.addRow("每台照片張數:", self.photo_count_spin)
         capture_layout.addRow("間隔時間 (秒):", self.interval_spin)
@@ -216,6 +220,15 @@ class AutoCameraGUI(QMainWindow):
         if card:
             card.update_preview(image)
 
+    @staticmethod
+    def _format_seconds(value):
+        value = max(float(value), 0.0)
+        if value >= 10:
+            return f"{value:.0f}s"
+        if value >= 1:
+            return f"{value:.1f}s"
+        return f"{value:.2f}s"
+
     def start_capture(self):
         """開始拍攝"""
         self.selected_cameras = [cam for cam, cb in self.camera_checkboxes if cb.isChecked()]
@@ -249,19 +262,19 @@ class AutoCameraGUI(QMainWindow):
         self.circular_progress.setPhotoProgress(self.saved_photos, self.total_photos)
         self.circular_progress.setStatusText(
             f"拍攝 {self.saved_photos}/{self.total_photos}",
-            f"倒數 {self.countdown_value}s"
+            f"倒數 {self._format_seconds(self.countdown_value)}"
         )
-        self.countdown_timer.start(1000)
+        self.countdown_timer.start(COUNTDOWN_TICK_MS)
 
     def update_countdown(self):
         """更新倒數計時"""
         if self.is_paused:
             return
-        self.countdown_value -= 1
+        self.countdown_value -= COUNTDOWN_TICK_MS / 1000
         self.circular_progress.setCountdown(self.countdown_value, self.interval)
         self.circular_progress.setStatusText(
             f"拍攝 {self.saved_photos}/{self.total_photos}",
-            f"倒數 {self.countdown_value}s"
+            f"倒數 {self._format_seconds(self.countdown_value)}"
         )
         if self.countdown_value <= 0:
             self.countdown_timer.stop()
@@ -283,9 +296,9 @@ class AutoCameraGUI(QMainWindow):
             if self.countdown_value > 0:
                 self.circular_progress.setStatusText(
                     f"拍攝 {self.saved_photos}/{self.total_photos}",
-                    f"倒數 {self.countdown_value}s"
+                    f"倒數 {self._format_seconds(self.countdown_value)}"
                 )
-                self.countdown_timer.start(1000)
+                self.countdown_timer.start(COUNTDOWN_TICK_MS)
             else:
                 self.capture_photo()
 
@@ -439,9 +452,9 @@ class AutoCameraGUI(QMainWindow):
             self.circular_progress.setCountdown(self.countdown_value, self.interval)
             self.circular_progress.setStatusText(
                 f"拍攝 {self.saved_photos}/{self.total_photos}",
-                f"倒數 {self.countdown_value}s"
+                f"倒數 {self._format_seconds(self.countdown_value)}"
             )
-            self.countdown_timer.start(1000)
+            self.countdown_timer.start(COUNTDOWN_TICK_MS)
         else:
             self.finish_capture()
 
