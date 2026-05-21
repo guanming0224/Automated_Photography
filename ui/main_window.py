@@ -18,6 +18,8 @@ from core.config import (
     MIN_PHOTO_COUNT, MAX_PHOTO_COUNT, MIN_INTERVAL, MAX_INTERVAL,
     DEFAULT_NAME_TEMPLATE, PREVIEW_GRID_COLUMNS, CAPTURE_TIMEOUT_MS,
     INTERVAL_STEP, COUNTDOWN_TICK_MS,
+    DEFAULT_OUTPUT_WIDTH, DEFAULT_OUTPUT_HEIGHT,
+    MIN_OUTPUT_SIZE, MAX_OUTPUT_SIZE, OUTPUT_SIZE_STEP,
 )
 from ui.widgets import CameraCard, CircularProgressWidget
 
@@ -34,7 +36,9 @@ class SaveBatchThread(QThread):
         successes = []
         errors = []
         for item in self.items:
-            frame = CameraThread.crop_to_aspect(item["frame"], 16, 9)
+            output_width, output_height = item["output_size"]
+            frame = CameraThread.crop_to_aspect(item["frame"], output_width, output_height)
+            frame = cv2.resize(frame, (output_width, output_height), interpolation=cv2.INTER_AREA)
             ok = cv2.imwrite(item["path"], frame)
             if ok:
                 successes.append({
@@ -82,6 +86,7 @@ class AutoCameraGUI(QMainWindow):
         self.is_running = False
         self.save_path = ""
         self.name_template = DEFAULT_NAME_TEMPLATE
+        self.output_size = (DEFAULT_OUTPUT_WIDTH, DEFAULT_OUTPUT_HEIGHT)
 
         self.init_ui()
 
@@ -136,6 +141,20 @@ class AutoCameraGUI(QMainWindow):
         self.interval_spin.setValue(DEFAULT_INTERVAL)
         capture_layout.addRow("每台照片張數:", self.photo_count_spin)
         capture_layout.addRow("間隔時間 (秒):", self.interval_spin)
+
+        self.output_width_spin = QSpinBox()
+        self.output_width_spin.setRange(MIN_OUTPUT_SIZE, MAX_OUTPUT_SIZE)
+        self.output_width_spin.setSingleStep(OUTPUT_SIZE_STEP)
+        self.output_width_spin.setValue(DEFAULT_OUTPUT_WIDTH)
+        self.output_height_spin = QSpinBox()
+        self.output_height_spin.setRange(MIN_OUTPUT_SIZE, MAX_OUTPUT_SIZE)
+        self.output_height_spin.setSingleStep(OUTPUT_SIZE_STEP)
+        self.output_height_spin.setValue(DEFAULT_OUTPUT_HEIGHT)
+        output_size_row = QHBoxLayout()
+        output_size_row.addWidget(self.output_width_spin)
+        output_size_row.addWidget(QLabel("x"))
+        output_size_row.addWidget(self.output_height_spin)
+        capture_layout.addRow("輸出尺寸 (px):", output_size_row)
         control_layout.addWidget(capture_group)
 
         # 相機選擇
@@ -248,6 +267,10 @@ class AutoCameraGUI(QMainWindow):
         self.name_template = self.name_edit.text().strip()
         self.total_cycles = self.photo_count_spin.value()
         self.interval = self.interval_spin.value()
+        self.output_size = (
+            self.output_width_spin.value(),
+            self.output_height_spin.value(),
+        )
         self.current_cycle = 0
         self.saved_photos = 0
         self.total_photos = self.total_cycles * len(self.selected_cameras)
@@ -408,6 +431,7 @@ class AutoCameraGUI(QMainWindow):
                 "path": path,
                 "frame": result["frame"],
                 "timestamp": result["timestamp"],
+                "output_size": self.output_size,
             })
         return items
 
