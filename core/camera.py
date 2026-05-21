@@ -101,6 +101,8 @@ class CameraThread(QThread):
 
     def stop(self):
         self.running = False
+        with self._capture_lock:
+            self._pending_capture_ids = []
 
     def request_capture(self, capture_id):
         """Ask the camera thread to return the next available frame."""

@@ -150,6 +150,7 @@ class AutoCameraGUI(QMainWindow):
             for cam in self.cameras:
                 checkbox = QCheckBox(f"相機 {cam}")
                 checkbox.setChecked(True)
+                checkbox.toggled.connect(lambda checked, cam=cam: self._on_camera_checkbox_changed(cam, checked))
                 camera_layout.addWidget(checkbox)
                 self.camera_checkboxes.append((cam, checkbox))
         else:
@@ -211,17 +212,60 @@ class AutoCameraGUI(QMainWindow):
 
     def start_camera_previews(self):
         """啟動相機預覽線程"""
-        for cam_idx in self.cameras:
-            thread = CameraThread(cam_idx)
-            thread.frame_ready.connect(self._dispatch_preview)
-            thread.capture_ready.connect(self._handle_capture_frame)
-            thread.max_resolution_ready.connect(self._on_max_resolution_ready)
-            thread.start()
-            self.camera_threads.append(thread)
-            self.camera_threads_by_index[cam_idx] = thread
+        for cam_idx, checkbox in self.camera_checkboxes:
+            if checkbox.isChecked():
+                self.start_camera_preview(cam_idx)
+
+    def start_camera_preview(self, cam_idx):
+        """啟動單台相機預覽並占用硬體資源。"""
+        if cam_idx in self.camera_threads_by_index:
+            return
+
+        card = self.camera_cards.get(cam_idx)
+        if card:
+            card.set_preview_waiting()
+
+        thread = CameraThread(cam_idx)
+        thread.frame_ready.connect(self._dispatch_preview)
+        thread.capture_ready.connect(self._handle_capture_frame)
+        thread.max_resolution_ready.connect(self._on_max_resolution_ready)
+        thread.start()
+        self.camera_threads.append(thread)
+        self.camera_threads_by_index[cam_idx] = thread
+
+    def stop_camera_preview(self, cam_idx):
+        """停止單台相機預覽並釋放硬體資源。"""
+        thread = self.camera_threads_by_index.pop(cam_idx, None)
+        if thread is not None:
+            thread.stop()
+            thread.wait()
+            if thread in self.camera_threads:
+                self.camera_threads.remove(thread)
+
+        self.camera_max_resolutions.pop(cam_idx, None)
+        self.selected_cameras = [cam for cam in self.selected_cameras if cam != cam_idx]
+
+        if cam_idx in self.pending_capture_expected:
+            self.pending_capture_expected.discard(cam_idx)
+            self.pending_capture_results.pop(cam_idx, None)
+            if self.pending_capture_id is not None and set(self.pending_capture_results) >= self.pending_capture_expected:
+                self._finalize_pending_capture([f"相機 {cam_idx} 已關閉，略過本輪拍攝。"])
+
+        card = self.camera_cards.get(cam_idx)
+        if card:
+            card.set_preview_inactive()
+
+    def _on_camera_checkbox_changed(self, cam_idx, checked):
+        """左側相機勾選狀態就是右側預覽與硬體串流開關。"""
+        if checked:
+            self.start_camera_preview(cam_idx)
+        else:
+            self.stop_camera_preview(cam_idx)
 
     def _on_max_resolution_ready(self, camera_index: int, width: int, height: int):
         """相機執行緒完成最高解析度偵測後更新 Card"""
+        if camera_index not in self.camera_threads_by_index:
+            return
         size = (width, height)
         self.camera_max_resolutions[camera_index] = size
         card = self.camera_cards.get(camera_index)
@@ -230,6 +274,8 @@ class AutoCameraGUI(QMainWindow):
 
     def _dispatch_preview(self, camera_index: int, image: QImage, original_width: int, original_height: int):
         """將 frame_ready 訊號轉發到對應的 CameraCard"""
+        if camera_index not in self.camera_threads_by_index:
+            return
         card = self.camera_cards.get(camera_index)
         if card:
             card.update_original_size(original_width, original_height)
@@ -246,7 +292,14 @@ class AutoCameraGUI(QMainWindow):
 
     def start_capture(self):
         """開始拍攝"""
-        self.selected_cameras = [cam for cam, cb in self.camera_checkboxes if cb.isChecked()]
+        for cam, cb in self.camera_checkboxes:
+            if cb.isChecked() and cam not in self.camera_threads_by_index:
+                self.start_camera_preview(cam)
+
+        self.selected_cameras = [
+            cam for cam, cb in self.camera_checkboxes
+            if cb.isChecked() and cam in self.camera_threads_by_index
+        ]
         if not self.selected_cameras:
             QMessageBox.warning(self, "相機未選擇", "請先勾選至少一台相機。")
             return

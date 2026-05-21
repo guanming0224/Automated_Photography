@@ -73,6 +73,16 @@ class CameraCard(QWidget):
             pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
 
+    def set_preview_waiting(self) -> None:
+        self.preview_label.clear()
+        self.preview_label.setText(f"相機 {self.camera_index} 預覽")
+        self.size_label.setText("原始: 等待影像 | 最高: 偵測中")
+
+    def set_preview_inactive(self) -> None:
+        self.preview_label.clear()
+        self.preview_label.setText(f"相機 {self.camera_index} 已關閉")
+        self.size_label.setText("原始: 已關閉 | 最高: 未偵測")
+
     def update_original_size(self, width: int, height: int) -> None:
         max_size = self.max_camera_size
         max_text = f"{max_size[0]}x{max_size[1]}" if max_size else "未知"
