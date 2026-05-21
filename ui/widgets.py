@@ -1,6 +1,6 @@
 """自訂UI組件"""
-from PySide6.QtWidgets import QLabel, QWidget, QSizePolicy
-from PySide6.QtGui import QPainter, QColor
+from PySide6.QtWidgets import QLabel, QWidget, QSizePolicy, QGroupBox, QVBoxLayout
+from PySide6.QtGui import QPainter, QColor, QPixmap, QImage
 from PySide6.QtCore import Qt, QSize
 from core.config import (
     CIRCULAR_PROGRESS_SIZE,
@@ -8,6 +8,9 @@ from core.config import (
     COUNTDOWN_PROGRESS_COLOR,
     BACKGROUND_COLOR,
     INNER_CIRCLE_COLOR,
+    PREVIEW_MIN_WIDTH,
+    PREVIEW_MIN_HEIGHT,
+    CARD_LAST_PHOTO_LABEL,
 )
 
 
@@ -22,6 +25,50 @@ class AspectRatioLabel(QLabel):
 
     def heightForWidth(self, width):
         return int(width * 9 / 16)
+
+
+class CameraCard(QWidget):
+    """單台相機的預覽卡片，包含即時預覽與最後拍攝照片"""
+    def __init__(self, camera_index: int, parent=None):
+        super().__init__(parent)
+        self.camera_index = camera_index
+
+        group = QGroupBox(f"相機 {camera_index}")
+        inner_layout = QVBoxLayout(group)
+
+        self.preview_label = AspectRatioLabel(f"相機 {camera_index} 預覽")
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setMinimumSize(PREVIEW_MIN_WIDTH, PREVIEW_MIN_HEIGHT)
+
+        separator = QLabel(CARD_LAST_PHOTO_LABEL)
+        separator.setAlignment(Qt.AlignCenter)
+
+        self.last_photo_label = AspectRatioLabel(f"相機 {camera_index} 最後拍攝")
+        self.last_photo_label.setAlignment(Qt.AlignCenter)
+        self.last_photo_label.setMinimumSize(PREVIEW_MIN_WIDTH, PREVIEW_MIN_HEIGHT)
+
+        inner_layout.addWidget(self.preview_label)
+        inner_layout.addWidget(separator)
+        inner_layout.addWidget(self.last_photo_label)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(group)
+
+    def update_preview(self, image: QImage) -> None:
+        pixmap = QPixmap.fromImage(image)
+        self.preview_label.setPixmap(
+            pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        )
+
+    def update_last_photo(self, pixmap: QPixmap) -> None:
+        self.last_photo_label.setPixmap(
+            pixmap.scaled(self.last_photo_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        )
+
+    def clear_last_photo(self) -> None:
+        self.last_photo_label.clear()
+        self.last_photo_label.setText(f"相機 {self.camera_index} 最後拍攝")
 
 
 class CircularProgressWidget(QWidget):

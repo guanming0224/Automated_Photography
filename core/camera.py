@@ -1,5 +1,6 @@
 """相機控制模組"""
 import cv2
+import threading
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
@@ -22,7 +23,8 @@ class CameraThread(QThread):
         self.camera_index = camera_index
         self.cap = None
         self.running = False
-        self.latest_frame = None
+        self._frame_lock = threading.Lock()
+        self._latest_frame = None
 
     def run(self):
         self.cap = open_camera(self.camera_index)
@@ -32,7 +34,8 @@ class CameraThread(QThread):
         while self.running:
             ret, frame = self.cap.read()
             if ret and frame is not None:
-                self.latest_frame = frame.copy()
+                with self._frame_lock:
+                    self._latest_frame = frame.copy()
                 cropped = self.crop_to_aspect(frame, 16, 9)
                 rgb_image = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
                 h, w, ch = rgb_image.shape
@@ -40,6 +43,13 @@ class CameraThread(QThread):
                 qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
                 self.frame_ready.emit(self.camera_index, qt_image)
             self.msleep(30)
+
+    def get_latest_frame(self):
+        """執行緒安全地取得最新一幀的副本"""
+        with self._frame_lock:
+            if self._latest_frame is None:
+                return None
+            return self._latest_frame.copy()
 
     def stop(self):
         self.running = False

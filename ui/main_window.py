@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QSpinBox, QFileDialog, QSplitter,
     QGroupBox, QFormLayout, QCheckBox, QMessageBox,
+    QScrollArea, QGridLayout,
 )
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import QTimer, Qt
@@ -14,14 +15,14 @@ from core.config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, CONTROL_PANEL_WIDTH, PREVIEW_PANEL_WIDTH,
     MAX_CAMERAS, DEFAULT_PHOTO_COUNT, DEFAULT_INTERVAL,
     MIN_PHOTO_COUNT, MAX_PHOTO_COUNT, MIN_INTERVAL, MAX_INTERVAL,
-    PREVIEW_MIN_WIDTH, PREVIEW_MIN_HEIGHT, DEFAULT_NAME_TEMPLATE,
+    DEFAULT_NAME_TEMPLATE, PREVIEW_GRID_COLUMNS,
 )
-from ui.widgets import AspectRatioLabel, CircularProgressWidget
+from ui.widgets import CameraCard, CircularProgressWidget
 
 
 class AutoCameraGUI(QMainWindow):
     """自動拍照GUI主窗口"""
-    
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("自動拍照GUI")
@@ -30,8 +31,7 @@ class AutoCameraGUI(QMainWindow):
         self.cameras = find_available_cameras(MAX_CAMERAS)
         self.camera_threads = []
         self.camera_threads_by_index = {}
-        self.camera_labels = {}
-        self.last_photo_labels = {}
+        self.camera_cards: dict[int, CameraCard] = {}
         self.camera_checkboxes = []
         self.selected_cameras = []
         self.countdown_timer = QTimer()
@@ -43,6 +43,7 @@ class AutoCameraGUI(QMainWindow):
         self.interval = 0
         self.countdown_value = 0
         self.is_paused = False
+        self.is_running = False
         self.save_path = ""
         self.name_template = DEFAULT_NAME_TEMPLATE
 
@@ -54,38 +55,38 @@ class AutoCameraGUI(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
 
-        control_panel = self.create_control_panel()
-        preview_panel = self.create_preview_panel()
+        control_scroll = self.create_control_panel()
+        preview_scroll = self.create_preview_panel()
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(control_panel)
-        splitter.addWidget(preview_panel)
+        splitter.addWidget(control_scroll)
+        splitter.addWidget(preview_scroll)
         splitter.setSizes([CONTROL_PANEL_WIDTH, PREVIEW_PANEL_WIDTH])
 
         main_layout.addWidget(splitter)
         self.start_camera_previews()
 
     def create_control_panel(self):
-        """創建控制面板"""
+        """創建控制面板，包裹在 QScrollArea 中"""
         control_panel = QWidget()
         control_layout = QVBoxLayout(control_panel)
 
+        # 存檔設定
         save_group = QGroupBox("存檔設定")
         save_layout = QFormLayout(save_group)
         self.save_path_edit = QLineEdit()
         self.save_path_edit.setText(os.getcwd())
         save_button = QPushButton("選擇資料夾")
         save_button.clicked.connect(self.select_save_path)
-        save_layout.addRow("存檔位置:", self.save_path_edit)
-        save_layout.addRow(save_button)
+        path_row = QHBoxLayout()
+        path_row.addWidget(self.save_path_edit)
+        path_row.addWidget(save_button)
+        save_layout.addRow("存檔位置:", path_row)
+        self.name_edit = QLineEdit(DEFAULT_NAME_TEMPLATE)
+        save_layout.addRow("命名模板\n(可用 {camera}、{index:04d}):", self.name_edit)
         control_layout.addWidget(save_group)
 
-        name_group = QGroupBox("命名設定")
-        name_layout = QFormLayout(name_group)
-        self.name_edit = QLineEdit(DEFAULT_NAME_TEMPLATE)
-        name_layout.addRow("命名模板 (可用 {camera}、{index:04d}):", self.name_edit)
-        control_layout.addWidget(name_group)
-
+        # 拍攝設定
         capture_group = QGroupBox("拍攝設定")
         capture_layout = QFormLayout(capture_group)
         self.photo_count_spin = QSpinBox()
@@ -98,6 +99,7 @@ class AutoCameraGUI(QMainWindow):
         capture_layout.addRow("間隔時間 (秒):", self.interval_spin)
         control_layout.addWidget(capture_group)
 
+        # 相機選擇
         camera_group = QGroupBox("相機選擇")
         camera_layout = QVBoxLayout(camera_group)
         if self.cameras:
@@ -107,50 +109,56 @@ class AutoCameraGUI(QMainWindow):
                 camera_layout.addWidget(checkbox)
                 self.camera_checkboxes.append((cam, checkbox))
         else:
-            empty_label = QLabel("未找到相機設備")
-            camera_layout.addWidget(empty_label)
+            camera_layout.addWidget(QLabel("未找到相機設備"))
         control_layout.addWidget(camera_group)
 
+        # 拍攝控制按鈕群組
+        button_group = QGroupBox("拍攝控制")
+        button_layout = QVBoxLayout(button_group)
+        start_stop_row = QHBoxLayout()
         self.start_button = QPushButton("開始拍攝")
         self.start_button.clicked.connect(self.start_capture)
-        control_layout.addWidget(self.start_button)
-
         self.stop_button = QPushButton("結束拍攝")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_capture)
-        control_layout.addWidget(self.stop_button)
-
+        start_stop_row.addWidget(self.start_button)
+        start_stop_row.addWidget(self.stop_button)
         self.pause_button = QPushButton("暫停拍攝")
         self.pause_button.setEnabled(False)
         self.pause_button.clicked.connect(self.toggle_pause)
-        control_layout.addWidget(self.pause_button)
+        button_layout.addLayout(start_stop_row)
+        button_layout.addWidget(self.pause_button)
+        control_layout.addWidget(button_group)
 
-        self.countdown_label = QLabel("倒數: --")
-        control_layout.addWidget(self.countdown_label)
-
+        # 圓形進度
         self.circular_progress = CircularProgressWidget()
         control_layout.addWidget(self.circular_progress, alignment=Qt.AlignCenter)
 
         control_layout.addStretch()
-        return control_panel
+
+        scroll = QScrollArea()
+        scroll.setWidget(control_panel)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        return scroll
 
     def create_preview_panel(self):
-        """創建預覽面板"""
-        preview_panel = QWidget()
-        preview_layout = QVBoxLayout(preview_panel)
+        """創建預覽面板：2欄 Grid 的 CameraCard，包裹在 QScrollArea 中"""
+        container = QWidget()
+        grid = QGridLayout(container)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
 
-        for cam in self.cameras:
-            label = AspectRatioLabel(f"相機 {cam}")
-            label.setAlignment(Qt.AlignCenter)
-            label.setMinimumSize(PREVIEW_MIN_WIDTH, PREVIEW_MIN_HEIGHT)
-            preview_layout.addWidget(label)
-            self.camera_labels[cam] = label
+        for i, cam in enumerate(self.cameras):
+            card = CameraCard(cam)
+            row, col = divmod(i, PREVIEW_GRID_COLUMNS)
+            grid.addWidget(card, row, col)
+            self.camera_cards[cam] = card
 
-        last_photo_group = QGroupBox("最後拍攝照片")
-        self.last_photo_layout = QVBoxLayout(last_photo_group)
-        preview_layout.addWidget(last_photo_group)
-
-        return preview_panel
+        scroll = QScrollArea()
+        scroll.setWidget(container)
+        scroll.setWidgetResizable(True)
+        return scroll
 
     def select_save_path(self):
         path = QFileDialog.getExistingDirectory(self, "選擇存檔資料夾")
@@ -161,18 +169,16 @@ class AutoCameraGUI(QMainWindow):
         """啟動相機預覽線程"""
         for cam_idx in self.cameras:
             thread = CameraThread(cam_idx)
-            thread.frame_ready.connect(self.update_preview)
+            thread.frame_ready.connect(self._dispatch_preview)
             thread.start()
             self.camera_threads.append(thread)
             self.camera_threads_by_index[cam_idx] = thread
 
-    def update_preview(self, camera_index, image):
-        """更新相機預覽"""
-        if camera_index in self.camera_labels:
-            pixmap = QPixmap.fromImage(image)
-            self.camera_labels[camera_index].setPixmap(
-                pixmap.scaled(self.camera_labels[camera_index].size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            )
+    def _dispatch_preview(self, camera_index: int, image: QImage):
+        """將 frame_ready 訊號轉發到對應的 CameraCard"""
+        card = self.camera_cards.get(camera_index)
+        if card:
+            card.update_preview(image)
 
     def start_capture(self):
         """開始拍攝"""
@@ -181,12 +187,14 @@ class AutoCameraGUI(QMainWindow):
             QMessageBox.warning(self, "相機未選擇", "請先勾選至少一台相機。")
             return
 
-        self.setup_last_photo_displays()
-
         self.save_path = self.save_path_edit.text()
         if not self.save_path or not os.path.isdir(self.save_path):
             QMessageBox.warning(self, "存檔路徑錯誤", "請選擇有效的存檔資料夾。")
             return
+
+        for cam in self.selected_cameras:
+            if cam in self.camera_cards:
+                self.camera_cards[cam].clear_last_photo()
 
         self.name_template = self.name_edit.text().strip()
         self.total_cycles = self.photo_count_spin.value()
@@ -194,60 +202,53 @@ class AutoCameraGUI(QMainWindow):
         self.current_cycle = 0
         self.saved_photos = 0
         self.total_photos = self.total_cycles * len(self.selected_cameras)
+        self.is_running = True
+        self.is_paused = False
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.pause_button.setEnabled(True)
         self.pause_button.setText("暫停拍攝")
-        self.is_paused = False
         self.countdown_value = self.interval
-        self.countdown_label.setText(f"倒數: {self.countdown_value}")
         self.circular_progress.setCountdown(self.countdown_value, self.interval)
         self.circular_progress.setPhotoProgress(self.saved_photos, self.total_photos)
-        self.circular_progress.setStatusText(f"拍攝 {self.saved_photos}/{self.total_photos}", f"倒數 {self.countdown_value}s")
+        self.circular_progress.setStatusText(
+            f"拍攝 {self.saved_photos}/{self.total_photos}",
+            f"倒數 {self.countdown_value}s"
+        )
         self.countdown_timer.start(1000)
-
-    def setup_last_photo_displays(self):
-        """設置最後拍攝照片顯示區"""
-        while self.last_photo_layout.count():
-            child = self.last_photo_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-        
-        self.last_photo_labels.clear()
-        for cam in self.selected_cameras:
-            label = AspectRatioLabel(f"相機 {cam}")
-            label.setAlignment(Qt.AlignCenter)
-            label.setMinimumSize(PREVIEW_MIN_WIDTH, PREVIEW_MIN_HEIGHT)
-            self.last_photo_layout.addWidget(label)
-            self.last_photo_labels[cam] = label
 
     def update_countdown(self):
         """更新倒數計時"""
         if self.is_paused:
             return
         self.countdown_value -= 1
-        self.countdown_label.setText(f"倒數: {self.countdown_value}")
         self.circular_progress.setCountdown(self.countdown_value, self.interval)
-        self.circular_progress.setStatusText(f"拍攝 {self.saved_photos}/{self.total_photos}", f"倒數 {self.countdown_value}s")
+        self.circular_progress.setStatusText(
+            f"拍攝 {self.saved_photos}/{self.total_photos}",
+            f"倒數 {self.countdown_value}s"
+        )
         if self.countdown_value <= 0:
             self.countdown_timer.stop()
             self.capture_photo()
 
     def toggle_pause(self):
         """切換暫停/繼續"""
-        if not self.stop_button.isEnabled():
+        if not self.is_running:
             return
         self.is_paused = not self.is_paused
         if self.is_paused:
             self.countdown_timer.stop()
             self.pause_button.setText("繼續拍攝")
-            self.countdown_label.setText("已暫停")
-            self.circular_progress.setStatusText(f"拍攝 {self.saved_photos}/{self.total_photos}", "已暫停")
+            self.circular_progress.setStatusText(
+                f"拍攝 {self.saved_photos}/{self.total_photos}", "已暫停"
+            )
         else:
             self.pause_button.setText("暫停拍攝")
             if self.countdown_value > 0:
-                self.countdown_label.setText(f"倒數: {self.countdown_value}")
-                self.circular_progress.setStatusText(f"拍攝 {self.saved_photos}/{self.total_photos}", f"倒數 {self.countdown_value}s")
+                self.circular_progress.setStatusText(
+                    f"拍攝 {self.saved_photos}/{self.total_photos}",
+                    f"倒數 {self.countdown_value}s"
+                )
                 self.countdown_timer.start(1000)
             else:
                 self.capture_photo()
@@ -256,11 +257,11 @@ class AutoCameraGUI(QMainWindow):
         """結束拍攝"""
         self.countdown_timer.stop()
         self.is_paused = False
+        self.is_running = False
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.pause_button.setEnabled(False)
         self.pause_button.setText("暫停拍攝")
-        self.countdown_label.setText("已結束")
         self.circular_progress.setStatusText("已結束", "")
 
     def capture_photo(self):
@@ -272,11 +273,11 @@ class AutoCameraGUI(QMainWindow):
         self.current_cycle += 1
         for cam in self.selected_cameras:
             thread = self.camera_threads_by_index.get(cam)
-            frame = thread.latest_frame if thread is not None else None
+            frame = thread.get_latest_frame() if thread is not None else None
             if frame is None:
                 continue
 
-            cropped = self.crop_to_aspect(frame, 16, 9)
+            cropped = CameraThread.crop_to_aspect(frame, 16, 9)
             try:
                 filename = self.name_template.format(camera=cam, index=self.current_cycle)
             except Exception:
@@ -288,20 +289,23 @@ class AutoCameraGUI(QMainWindow):
 
             rgb_image = cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_image.shape
-            bytes_per_line = ch * w
-            qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            qt_image = QImage(rgb_image.data, w, h, ch * w, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(qt_image)
-            if cam in self.last_photo_labels:
-                self.last_photo_labels[cam].setPixmap(pixmap.scaled(self.last_photo_labels[cam].size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            if cam in self.camera_cards:
+                self.camera_cards[cam].update_last_photo(pixmap)
 
         self.circular_progress.setPhotoProgress(self.saved_photos, self.total_photos)
-        self.circular_progress.setStatusText(f"拍攝 {self.saved_photos}/{self.total_photos}", f"倒數 0s")
+        self.circular_progress.setStatusText(
+            f"拍攝 {self.saved_photos}/{self.total_photos}", "倒數 0s"
+        )
 
         if self.current_cycle < self.total_cycles:
             self.countdown_value = self.interval
-            self.countdown_label.setText(f"倒數: {self.countdown_value}")
             self.circular_progress.setCountdown(self.countdown_value, self.interval)
-            self.circular_progress.setStatusText(f"拍攝 {self.saved_photos}/{self.total_photos}", f"倒數 {self.countdown_value}s")
+            self.circular_progress.setStatusText(
+                f"拍攝 {self.saved_photos}/{self.total_photos}",
+                f"倒數 {self.countdown_value}s"
+            )
             self.countdown_timer.start(1000)
         else:
             self.finish_capture()
@@ -309,26 +313,12 @@ class AutoCameraGUI(QMainWindow):
     def finish_capture(self):
         """完成拍攝"""
         self.countdown_timer.stop()
+        self.is_running = False
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-        self.countdown_label.setText("拍攝完成")
+        self.pause_button.setEnabled(False)
+        self.pause_button.setText("暫停拍攝")
         self.circular_progress.setStatusText("拍攝完成", "")
-
-    @staticmethod
-    def crop_to_aspect(frame, w_ratio, h_ratio):
-        """裁切幀為指定寬高比"""
-        h, w = frame.shape[:2]
-        target = w_ratio / h_ratio
-        current = w / h
-        if current > target:
-            new_w = int(target * h)
-            x1 = (w - new_w) // 2
-            return frame[:, x1:x1 + new_w]
-        elif current < target:
-            new_h = int(w / target)
-            y1 = (h - new_h) // 2
-            return frame[y1:y1 + new_h, :]
-        return frame
 
     def closeEvent(self, event):
         """關閉事件"""

@@ -32,3 +32,7 @@ INNER_CIRCLE_COLOR = (245, 245, 245)
 
 # 命名配置
 DEFAULT_NAME_TEMPLATE = "cam{camera}_{index:04d}.jpg"
+
+# 預覽 Grid 配置
+PREVIEW_GRID_COLUMNS = 2
+CARD_LAST_PHOTO_LABEL = "── 最後拍攝 ──"
