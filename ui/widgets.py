@@ -18,13 +18,19 @@ class AspectRatioLabel(QLabel):
     """保持寬高比的標籤"""
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.aspect_ratio = 16 / 9
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def hasHeightForWidth(self):
         return True
 
     def heightForWidth(self, width):
-        return int(width * 9 / 16)
+        return int(width / self.aspect_ratio)
+
+    def setAspectRatio(self, width: int, height: int) -> None:
+        if width > 0 and height > 0:
+            self.aspect_ratio = width / height
+            self.updateGeometry()
 
 
 class CameraCard(QWidget):
@@ -32,9 +38,13 @@ class CameraCard(QWidget):
     def __init__(self, camera_index: int, parent=None):
         super().__init__(parent)
         self.camera_index = camera_index
+        self.max_camera_size = None
 
         group = QGroupBox(f"相機 {camera_index}")
         inner_layout = QVBoxLayout(group)
+
+        self.size_label = QLabel("原始: 等待影像 | 最高: 偵測中")
+        self.size_label.setAlignment(Qt.AlignCenter)
 
         self.preview_label = AspectRatioLabel(f"相機 {camera_index} 預覽")
         self.preview_label.setAlignment(Qt.AlignCenter)
@@ -47,6 +57,7 @@ class CameraCard(QWidget):
         self.last_photo_label.setAlignment(Qt.AlignCenter)
         self.last_photo_label.setMinimumSize(PREVIEW_MIN_WIDTH, PREVIEW_MIN_HEIGHT)
 
+        inner_layout.addWidget(self.size_label)
         inner_layout.addWidget(self.preview_label)
         inner_layout.addWidget(separator)
         inner_layout.addWidget(self.last_photo_label)
@@ -56,10 +67,24 @@ class CameraCard(QWidget):
         outer_layout.addWidget(group)
 
     def update_preview(self, image: QImage) -> None:
+        self.preview_label.setAspectRatio(image.width(), image.height())
         pixmap = QPixmap.fromImage(image)
         self.preview_label.setPixmap(
             pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
+
+    def update_original_size(self, width: int, height: int) -> None:
+        max_size = self.max_camera_size
+        max_text = f"{max_size[0]}x{max_size[1]}" if max_size else "未知"
+        self.size_label.setText(f"原始: {width}x{height} | 最高: {max_text}")
+
+    def set_max_camera_size(self, size) -> None:
+        self.max_camera_size = size
+        if size:
+            original_text = self.size_label.text().split("|")[0].strip()
+            self.size_label.setText(f"{original_text} | 最高: {size[0]}x{size[1]}")
+        else:
+            self.size_label.setText("原始: 等待影像 | 最高: 未知")
 
     def update_last_photo(self, pixmap: QPixmap) -> None:
         self.last_photo_label.setPixmap(
