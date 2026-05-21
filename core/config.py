@@ -49,6 +49,7 @@ INNER_CIRCLE_COLOR = (245, 245, 245)
 
 # 命名配置
 DEFAULT_NAME_TEMPLATE = "cam{camera}_{index:04d}.jpg"
+DEFAULT_SAVE_DIR = "Picture"
 
 # 預覽 Grid 配置
 PREVIEW_GRID_COLUMNS = 2

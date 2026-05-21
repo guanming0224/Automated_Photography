@@ -16,7 +16,7 @@ from core.config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, CONTROL_PANEL_WIDTH, PREVIEW_PANEL_WIDTH,
     MAX_CAMERAS, DEFAULT_PHOTO_COUNT, DEFAULT_INTERVAL,
     MIN_PHOTO_COUNT, MAX_PHOTO_COUNT, MIN_INTERVAL, MAX_INTERVAL,
-    DEFAULT_NAME_TEMPLATE, PREVIEW_GRID_COLUMNS, CAPTURE_TIMEOUT_MS,
+    DEFAULT_NAME_TEMPLATE, DEFAULT_SAVE_DIR, PREVIEW_GRID_COLUMNS, CAPTURE_TIMEOUT_MS,
     INTERVAL_STEP, COUNTDOWN_TICK_MS,
 )
 from ui.widgets import CameraCard, CircularProgressWidget
@@ -112,7 +112,9 @@ class AutoCameraGUI(QMainWindow):
         save_group = QGroupBox("存檔設定")
         save_layout = QFormLayout(save_group)
         self.save_path_edit = QLineEdit()
-        self.save_path_edit.setText(os.getcwd())
+        default_save_path = os.path.join(os.getcwd(), DEFAULT_SAVE_DIR)
+        os.makedirs(default_save_path, exist_ok=True)
+        self.save_path_edit.setText(default_save_path)
         save_button = QPushButton("選擇資料夾")
         save_button.clicked.connect(self.select_save_path)
         path_row = QHBoxLayout()
