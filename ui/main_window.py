@@ -37,7 +37,10 @@ class SaveBatchThread(QThread):
         errors = []
         for item in self.items:
             output_width, output_height = item["output_size"]
-            frame = CameraThread.crop_to_aspect(item["frame"], output_width, output_height)
+            # crop_to_aspect 使用比例，output_width/output_height 即目標長寬比
+            from math import gcd
+            g = gcd(output_width, output_height)
+            frame = CameraThread.crop_to_aspect(item["frame"], output_width // g, output_height // g)
             frame = cv2.resize(frame, (output_width, output_height), interpolation=cv2.INTER_AREA)
             ok = cv2.imwrite(item["path"], frame)
             if ok:
@@ -471,7 +474,11 @@ class AutoCameraGUI(QMainWindow):
         if errors:
             QMessageBox.warning(self, "拍攝或存檔異常", "\n".join(errors[:8]))
 
-        if self.current_cycle < self.total_cycles and self.is_running:
+        if not self.is_running:
+            # 使用者已手動結束，不干擾現有狀態文字
+            return
+
+        if self.current_cycle < self.total_cycles:
             self.countdown_value = self.interval
             self.circular_progress.setCountdown(self.countdown_value, self.interval)
             self.circular_progress.setStatusText(
@@ -503,7 +510,11 @@ class AutoCameraGUI(QMainWindow):
     def closeEvent(self, event):
         """關閉事件"""
         self.countdown_timer.stop()
+        self.capture_timeout_timer.stop()
+        self.is_running = False
         for thread in self.camera_threads:
             thread.stop()
+            thread.wait()
+        for thread in list(self.save_threads):
             thread.wait()
         event.accept()
