@@ -48,11 +48,11 @@ class SaveBatchThread(QThread):
             frame = item["frame"]
             ok = cv2.imwrite(item["path"], frame)
             if ok:
+                h, w = frame.shape[:2]
+                thumb = cv2.resize(frame, (640, int(h * 640 / w)), interpolation=cv2.INTER_AREA) if w > 640 else frame
                 successes.append({
                     "camera": item["camera"],
-                    "path": item["path"],
-                    "frame": frame,
-                    "timestamp": item["timestamp"],
+                    "thumbnail_rgb": cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB),
                 })
             else:
                 errors.append(f"相機 {item['camera']} 存檔失敗：{item['path']}")
@@ -290,14 +290,14 @@ class AutoCameraGUI(QMainWindow):
         card = self.camera_cards.get(camera_index)
         if card:
             card.set_max_camera_size(size)
+            card.update_original_size(width, height)
 
-    def _dispatch_preview(self, camera_index: int, image: QImage, original_width: int, original_height: int):
+    def _dispatch_preview(self, camera_index: int, image: QImage):
         """將 frame_ready 訊號轉發到對應的 CameraCard"""
         if camera_index not in self.camera_threads_by_index:
             return
         card = self.camera_cards.get(camera_index)
         if card:
-            card.update_original_size(original_width, original_height)
             card.update_preview(image)
 
     @staticmethod
@@ -521,13 +521,9 @@ class AutoCameraGUI(QMainWindow):
     def _on_save_batch_finished(self, capture_id, successes, errors):
         for item in successes:
             self.saved_photos += 1
-            frame = item["frame"]
-            h, w = frame.shape[:2]
-            if w > 640:
-                frame = cv2.resize(frame, (640, int(h * 640 / w)), interpolation=cv2.INTER_AREA)
-            rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb_image.shape
-            qt_image = QImage(rgb_image.data, w, h, ch * w, QImage.Format_RGB888)
+            rgb = item["thumbnail_rgb"]
+            h, w, ch = rgb.shape
+            qt_image = QImage(rgb.data, w, h, ch * w, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(qt_image.copy())
             card = self.camera_cards.get(item["camera"])
             if card:

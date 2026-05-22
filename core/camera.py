@@ -18,7 +18,7 @@ def open_camera(index):
 
 class CameraThread(QThread):
     """相機取框線程"""
-    frame_ready = Signal(int, QImage, int, int)
+    frame_ready = Signal(int, QImage)
     capture_ready = Signal(int, int, object, float)
     max_resolution_ready = Signal(int, int, int)  # camera_index, max_w, max_h
 
@@ -46,7 +46,6 @@ class CameraThread(QThread):
             while self.running:
                 ret, frame = self.cap.read()
                 if ret and frame is not None:
-                    original_h, original_w = frame.shape[:2]
                     frame_copy = frame.copy()
                     timestamp = time.time()
                     with self._frame_lock:
@@ -64,12 +63,7 @@ class CameraThread(QThread):
                     h, w, ch = rgb_image.shape
                     bytes_per_line = ch * w
                     qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-                    self.frame_ready.emit(
-                        self.camera_index,
-                        qt_image.copy(),
-                        original_w,
-                        original_h,
-                    )
+                    self.frame_ready.emit(self.camera_index, qt_image.copy())
                 self.msleep(66)
         finally:
             if self.cap:

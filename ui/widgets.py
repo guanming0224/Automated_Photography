@@ -84,6 +84,9 @@ class CameraCard(QWidget):
         self.size_label.setText("原始: 已關閉 | 最高: 未偵測")
 
     def update_original_size(self, width: int, height: int) -> None:
+        if getattr(self, '_last_original_size', None) == (width, height):
+            return
+        self._last_original_size = (width, height)
         max_size = self.max_camera_size
         max_text = f"{max_size[0]}x{max_size[1]}" if max_size else "未知"
         self.size_label.setText(f"原始: {width}x{height} | 最高: {max_text}")
