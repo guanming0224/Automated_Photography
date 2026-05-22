@@ -44,9 +44,15 @@ class SaveBatchThread(QThread):
     def run(self):
         successes = []
         errors = []
+        reserved_paths = set()
         for item in self.items:
             frame = item["frame"]
-            ok = cv2.imwrite(item["path"], frame)
+            path = self._resolve_path(
+                item["name_template"], item["camera"], item["photo_index"],
+                item["save_dir"], reserved_paths,
+            )
+            reserved_paths.add(path)
+            ok = cv2.imwrite(path, frame)
             if ok:
                 h, w = frame.shape[:2]
                 thumb = cv2.resize(frame, (640, int(h * 640 / w)), interpolation=cv2.INTER_AREA) if w > 640 else frame
@@ -55,8 +61,28 @@ class SaveBatchThread(QThread):
                     "thumbnail_rgb": cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB),
                 })
             else:
-                errors.append(f"相機 {item['camera']} 存檔失敗：{item['path']}")
+                errors.append(f"相機 {item['camera']} 存檔失敗：{path}")
         self.save_finished.emit(self.capture_id, successes, errors)
+
+    @staticmethod
+    def _resolve_path(name_template, camera_index, photo_index, save_dir, reserved_paths):
+        try:
+            filename = name_template.format(camera=camera_index, index=photo_index)
+        except Exception:
+            filename = f"cam{camera_index}_{photo_index:04d}.jpg"
+        filename = os.path.basename(filename.strip())
+        filename = re.sub(r'[<>:"/\\|?*]', "_", filename)
+        if not filename:
+            filename = f"cam{camera_index}_{photo_index:04d}.jpg"
+        root, ext = os.path.splitext(filename)
+        if not ext:
+            ext = ".jpg"
+        path = os.path.join(save_dir, root + ext)
+        suffix = 1
+        while path in reserved_paths or os.path.exists(path):
+            path = os.path.join(save_dir, f"{root}_{suffix:03d}{ext}")
+            suffix += 1
+        return path
 
 
 class AutoCameraGUI(QMainWindow):
@@ -486,37 +512,15 @@ class AutoCameraGUI(QMainWindow):
 
     def _build_capture_items(self):
         items = []
-        reserved_paths = set()
         for cam, result in sorted(self.pending_capture_results.items()):
-            path = self._make_photo_path(cam, self.current_cycle, reserved_paths)
-            reserved_paths.add(path)
             items.append({
                 "camera": cam,
-                "path": path,
+                "photo_index": self.current_cycle,
+                "save_dir": self.save_path,
+                "name_template": self.name_template,
                 "frame": result["frame"],
-                "timestamp": result["timestamp"],
             })
         return items
-
-    def _make_photo_path(self, camera_index, photo_index, reserved_paths):
-        try:
-            filename = self.name_template.format(camera=camera_index, index=photo_index)
-        except Exception:
-            filename = f"cam{camera_index}_{photo_index:04d}.jpg"
-
-        filename = os.path.basename(filename.strip())
-        filename = re.sub(r'[<>:"/\\|?*]', "_", filename)
-        if not filename:
-            filename = f"cam{camera_index}_{photo_index:04d}.jpg"
-        root, ext = os.path.splitext(filename)
-        if not ext:
-            ext = ".jpg"
-        path = os.path.join(self.save_path, root + ext)
-        suffix = 1
-        while path in reserved_paths or os.path.exists(path):
-            path = os.path.join(self.save_path, f"{root}_{suffix:03d}{ext}")
-            suffix += 1
-        return path
 
     def _on_save_batch_finished(self, capture_id, successes, errors):
         for item in successes:

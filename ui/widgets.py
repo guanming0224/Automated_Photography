@@ -39,6 +39,7 @@ class CameraCard(QWidget):
         super().__init__(parent)
         self.camera_index = camera_index
         self.max_camera_size = None
+        self._last_original_size = None
 
         group = QGroupBox(f"相機 {camera_index}")
         inner_layout = QVBoxLayout(group)
@@ -74,30 +75,35 @@ class CameraCard(QWidget):
         )
 
     def set_preview_waiting(self) -> None:
+        self._last_original_size = None
+        self.max_camera_size = None
         self.preview_label.clear()
         self.preview_label.setText(f"相機 {self.camera_index} 預覽")
         self.size_label.setText("原始: 等待影像 | 最高: 偵測中")
 
     def set_preview_inactive(self) -> None:
+        self._last_original_size = None
+        self.max_camera_size = None
         self.preview_label.clear()
         self.preview_label.setText(f"相機 {self.camera_index} 已關閉")
         self.size_label.setText("原始: 已關閉 | 最高: 未偵測")
 
+    def _refresh_size_label(self) -> None:
+        orig = self._last_original_size
+        orig_text = f"{orig[0]}x{orig[1]}" if orig else "等待影像"
+        max_size = self.max_camera_size
+        max_text = f"{max_size[0]}x{max_size[1]}" if max_size else "偵測中"
+        self.size_label.setText(f"原始: {orig_text} | 最高: {max_text}")
+
     def update_original_size(self, width: int, height: int) -> None:
-        if getattr(self, '_last_original_size', None) == (width, height):
+        if self._last_original_size == (width, height):
             return
         self._last_original_size = (width, height)
-        max_size = self.max_camera_size
-        max_text = f"{max_size[0]}x{max_size[1]}" if max_size else "未知"
-        self.size_label.setText(f"原始: {width}x{height} | 最高: {max_text}")
+        self._refresh_size_label()
 
     def set_max_camera_size(self, size) -> None:
         self.max_camera_size = size
-        if size:
-            original_text = self.size_label.text().split("|")[0].strip()
-            self.size_label.setText(f"{original_text} | 最高: {size[0]}x{size[1]}")
-        else:
-            self.size_label.setText("原始: 等待影像 | 最高: 未知")
+        self._refresh_size_label()
 
     def update_last_photo(self, pixmap: QPixmap) -> None:
         self.last_photo_label.setPixmap(
@@ -117,6 +123,11 @@ class CircularProgressWidget(QWidget):
         self.countdown_progress = 0.0
         self.photo_text = "拍攝 0/0"
         self.countdown_text = "倒數 0s"
+        self._color_bg = QColor(*BACKGROUND_COLOR)
+        self._color_photo = QColor(*PHOTO_PROGRESS_COLOR)
+        self._color_inner = QColor(*INNER_CIRCLE_COLOR)
+        self._color_countdown = QColor(*COUNTDOWN_PROGRESS_COLOR)
+        self._color_text = QColor(0, 0, 0)
 
     def setPhotoProgress(self, current, total):
         self.photo_progress = 0.0
@@ -141,23 +152,23 @@ class CircularProgressWidget(QWidget):
         rect = self.rect().adjusted(10, 10, -10, -10)
 
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(*BACKGROUND_COLOR))
+        painter.setBrush(self._color_bg)
         painter.drawEllipse(rect)
 
         start_angle = 90 * 16
         if self.photo_progress > 0:
-            painter.setBrush(QColor(*PHOTO_PROGRESS_COLOR))
+            painter.setBrush(self._color_photo)
             painter.drawPie(rect, start_angle, int(-360 * self.photo_progress * 16))
 
         inner = rect.adjusted(24, 24, -24, -24)
-        painter.setBrush(QColor(*INNER_CIRCLE_COLOR))
+        painter.setBrush(self._color_inner)
         painter.drawEllipse(inner)
 
         if self.countdown_progress > 0:
-            painter.setBrush(QColor(*COUNTDOWN_PROGRESS_COLOR))
+            painter.setBrush(self._color_countdown)
             painter.drawPie(inner, start_angle, int(-360 * self.countdown_progress * 16))
 
-        painter.setPen(QColor(0, 0, 0))
+        painter.setPen(self._color_text)
         painter.setBrush(Qt.NoBrush)
         painter.drawText(inner, Qt.AlignCenter, f"{self.photo_text}\n{self.countdown_text}")
 
