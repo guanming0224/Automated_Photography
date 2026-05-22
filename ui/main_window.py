@@ -57,7 +57,6 @@ class AutoCameraGUI(QMainWindow):
         self.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
 
         self.cameras = find_available_cameras(MAX_CAMERAS)
-        self.camera_threads = []
         self.camera_threads_by_index = {}
         self.camera_cards: dict[int, CameraCard] = {}
         self.camera_max_resolutions = {}
@@ -230,7 +229,6 @@ class AutoCameraGUI(QMainWindow):
         thread.capture_ready.connect(self._handle_capture_frame)
         thread.max_resolution_ready.connect(self._on_max_resolution_ready)
         thread.start()
-        self.camera_threads.append(thread)
         self.camera_threads_by_index[cam_idx] = thread
 
     def stop_camera_preview(self, cam_idx):
@@ -239,8 +237,6 @@ class AutoCameraGUI(QMainWindow):
         if thread is not None:
             thread.stop()
             thread.wait()
-            if thread in self.camera_threads:
-                self.camera_threads.remove(thread)
 
         self.camera_max_resolutions.pop(cam_idx, None)
         self.selected_cameras = [cam for cam in self.selected_cameras if cam != cam_idx]
@@ -502,7 +498,11 @@ class AutoCameraGUI(QMainWindow):
     def _on_save_batch_finished(self, capture_id, successes, errors):
         for item in successes:
             self.saved_photos += 1
-            rgb_image = cv2.cvtColor(item["frame"], cv2.COLOR_BGR2RGB)
+            frame = item["frame"]
+            h, w = frame.shape[:2]
+            if w > 640:
+                frame = cv2.resize(frame, (640, int(h * 640 / w)), interpolation=cv2.INTER_AREA)
+            rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_image.shape
             qt_image = QImage(rgb_image.data, w, h, ch * w, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(qt_image.copy())
@@ -553,9 +553,9 @@ class AutoCameraGUI(QMainWindow):
         self.countdown_timer.stop()
         self.capture_timeout_timer.stop()
         self.is_running = False
-        for thread in self.camera_threads:
+        for thread in list(self.camera_threads_by_index.values()):
             thread.stop()
-            thread.wait()
+            thread.wait(3000)
         for thread in list(self.save_threads):
-            thread.wait()
+            thread.wait(3000)
         event.accept()

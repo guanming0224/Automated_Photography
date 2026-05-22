@@ -88,6 +88,8 @@ class CameraThread(QThread):
             actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             if actual_w * actual_h > best_w * best_h:
                 best_w, best_h = actual_w, actual_h
+            if actual_w == width and actual_h == height:
+                break
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, best_w)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, best_h)
         return best_w, best_h
@@ -116,23 +118,6 @@ class CameraThread(QThread):
             self._pending_capture_ids = []
         return capture_ids
 
-    @staticmethod
-    def crop_to_aspect(frame, w_ratio, h_ratio):
-        """裁切幀為指定寬高比"""
-        h, w = frame.shape[:2]
-        target = w_ratio / h_ratio
-        current = w / h
-        if current > target:
-            new_w = int(target * h)
-            x1 = (w - new_w) // 2
-            return frame[:, x1:x1 + new_w]
-        elif current < target:
-            new_h = int(w / target)
-            y1 = (h - new_h) // 2
-            return frame[y1:y1 + new_h, :]
-        return frame
-
-
 def find_available_cameras(max_cameras=5):
     """尋找可用的相機設備"""
     cameras = []
@@ -144,30 +129,3 @@ def find_available_cameras(max_cameras=5):
     return cameras
 
 
-def detect_max_camera_resolution(index, candidates=None):
-    """Probe common camera modes and return the largest frame size observed."""
-    candidates = candidates or COMMON_CAMERA_RESOLUTIONS
-    cap = open_camera(index)
-    if not cap.isOpened():
-        cap.release()
-        return None
-
-    observed = set()
-    try:
-        for width, height in candidates:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-            frame = None
-            for _ in range(3):
-                ret, candidate = cap.read()
-                if ret and candidate is not None:
-                    frame = candidate
-            if frame is not None:
-                h, w = frame.shape[:2]
-                observed.add((w, h))
-    finally:
-        cap.release()
-
-    if not observed:
-        return None
-    return max(observed, key=lambda size: size[0] * size[1])
