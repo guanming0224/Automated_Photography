@@ -112,7 +112,7 @@ class AutoCameraGUI(QMainWindow):
         save_group = QGroupBox("存檔設定")
         save_layout = QFormLayout(save_group)
         self.save_path_edit = QLineEdit()
-        default_save_path = os.path.join(os.getcwd(), DEFAULT_SAVE_DIR)
+        default_save_path = os.path.join(os.path.expanduser("~"), "Desktop", DEFAULT_SAVE_DIR)
         os.makedirs(default_save_path, exist_ok=True)
         self.save_path_edit.setText(default_save_path)
         save_button = QPushButton("選擇資料夾")
