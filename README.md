@@ -23,13 +23,14 @@ auto_camera_gui/
 
 ## 功能特性
 
+- 相機偵測在背景執行緒進行，視窗立即顯示不凍結
 - 自動偵測可用相機（最多 5 台）並以最高解析度串流
 - 多相機同步拍攝，逾時保護（單台卡住不影響其他相機）
 - 存檔使用相機原始畫質，不 resize、不裁切
 - 右側預覽面板：2 欄 Grid，每張卡片含即時預覽 + 最後拍攝照片
 - 圓形進度指示器：外圈顯示拍攝進度、內圈顯示倒數進度
 - 暫停 / 繼續 / 結束拍攝控制
-- 自訂存檔路徑與命名模板
+- 自訂存檔路徑與命名模板（預設存至桌面 `Picture` 資料夾）
 - 控制面板與預覽面板皆可捲動，適合小螢幕
 
 ## 安裝與執行
@@ -86,7 +87,7 @@ pyinstaller --windowed --name "自動拍照GUI" main.py
 
 | 類別 / 函式 | 說明 |
 |---|---|
-| `CameraThread` | 相機串流執行緒，以最高解析度串流；分別發出 `frame_ready`（GUI 預覽）與 `capture_ready`（存檔用原始 frame）兩個信號 |
+| `CameraThread` | 相機串流執行緒，以最高解析度串流；發出 `frame_ready`（GUI 預覽 QImage）與 `capture_ready`（存檔用原始 frame）兩個信號 |
 | `open_camera()` | 優先用 `CAP_DSHOW` 開啟（Windows），失敗則 fallback |
 | `find_available_cameras()` | 掃描 index 0–4，回傳可用相機清單 |
 
@@ -95,15 +96,16 @@ pyinstaller --windowed --name "自動拍照GUI" main.py
 | 類別 | 說明 |
 |---|---|
 | `AspectRatioLabel` | 維持指定寬高比的 QLabel，用於相機預覽 |
-| `CameraCard` | 單台相機卡片，含即時預覽、原始/最高解析度標籤、最後拍攝照片 |
-| `CircularProgressWidget` | 雙環圓形進度，外圈=拍攝進度，內圈=倒數進度 |
+| `CameraCard` | 單台相機卡片，含即時預覽、原始/最高解析度標籤、最後拍攝照片；尺寸標籤由 `_refresh_size_label()` 統一管理 |
+| `CircularProgressWidget` | 雙環圓形進度，外圈=拍攝進度，內圈=倒數進度；QColor 於 `__init__` 預建立 |
 
 ### ui/main_window.py
 
 | 類別 | 說明 |
 |---|---|
 | `AutoCameraGUI` | 主窗口，管理所有相機執行緒、拍攝狀態、UI 更新 |
-| `SaveBatchThread` | 非同步存檔執行緒，避免 I/O 阻塞主執行緒 |
+| `CameraDetectThread` | 背景偵測可用相機，完成後動態建立 UI 元件 |
+| `SaveBatchThread` | 非同步存檔執行緒；負責路徑決策（`_resolve_path`）、`cv2.imwrite`、縮圖產生 |
 
 ## 常見問題
 
@@ -128,6 +130,17 @@ pyinstaller --windowed --name "自動拍照GUI" main.py
 | PyInstaller ≥ 6.0 | 打包為可執行檔 |
 
 ## 更新日誌
+
+### v1.2.0 (2026-05-22)
+- 預設存檔路徑改為使用者桌面 `Picture` 資料夾
+- 相機偵測移至背景執行緒（`CameraDetectThread`），視窗啟動不再凍結
+- 預覽幀率降至 15fps，縮放改用 FastTransformation，主執行緒負擔大幅降低
+- `frame_ready` 信號移除冗餘的 `original_w/h` 參數，尺寸改由 `max_resolution_ready` 一次性更新
+- 路徑衝突檢查（`os.path.exists`）與縮圖產生（resize + cvtColor）全移至 `SaveBatchThread`
+- `CameraCard` 尺寸標籤改用 `_refresh_size_label()` 統一管理，移除脆弱的字串 split 邏輯
+- `CircularProgressWidget` QColor 預建立，減少每幀物件配置
+- `_probe_max_resolution` 找到精確匹配後提早結束，加速相機啟動
+- `closeEvent` 對所有執行緒加入 3000ms 逾時保護
 
 ### v1.1.0 (2026-05-21)
 - 相機以最高解析度串流，存檔直接取原始 frame（無 resize/crop）
