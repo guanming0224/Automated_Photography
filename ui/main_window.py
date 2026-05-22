@@ -22,6 +22,17 @@ from core.config import (
 from ui.widgets import CameraCard, CircularProgressWidget
 
 
+class CameraDetectThread(QThread):
+    cameras_found = Signal(list)
+
+    def __init__(self, max_cameras, parent=None):
+        super().__init__(parent)
+        self.max_cameras = max_cameras
+
+    def run(self):
+        self.cameras_found.emit(find_available_cameras(self.max_cameras))
+
+
 class SaveBatchThread(QThread):
     save_finished = Signal(int, list, list)
 
@@ -56,7 +67,8 @@ class AutoCameraGUI(QMainWindow):
         self.setWindowTitle("自動拍照GUI")
         self.setGeometry(100, 100, WINDOW_WIDTH, WINDOW_HEIGHT)
 
-        self.cameras = find_available_cameras(MAX_CAMERAS)
+        self.cameras = []
+        self.detect_thread = None
         self.camera_threads_by_index = {}
         self.camera_cards: dict[int, CameraCard] = {}
         self.camera_max_resolutions = {}
@@ -84,6 +96,7 @@ class AutoCameraGUI(QMainWindow):
         self.name_template = DEFAULT_NAME_TEMPLATE
 
         self.init_ui()
+        self._detect_cameras()
 
     def init_ui(self):
         """初始化UI"""
@@ -100,7 +113,6 @@ class AutoCameraGUI(QMainWindow):
         splitter.setSizes([CONTROL_PANEL_WIDTH, PREVIEW_PANEL_WIDTH])
 
         main_layout.addWidget(splitter)
-        self.start_camera_previews()
 
     def create_control_panel(self):
         """創建控制面板，包裹在 QScrollArea 中"""
@@ -144,16 +156,9 @@ class AutoCameraGUI(QMainWindow):
 
         # 相機選擇
         camera_group = QGroupBox("相機選擇")
-        camera_layout = QVBoxLayout(camera_group)
-        if self.cameras:
-            for cam in self.cameras:
-                checkbox = QCheckBox(f"相機 {cam}")
-                checkbox.setChecked(True)
-                checkbox.toggled.connect(lambda checked, cam=cam: self._on_camera_checkbox_changed(cam, checked))
-                camera_layout.addWidget(checkbox)
-                self.camera_checkboxes.append((cam, checkbox))
-        else:
-            camera_layout.addWidget(QLabel("未找到相機設備"))
+        self.camera_layout = QVBoxLayout(camera_group)
+        self.detecting_label = QLabel("偵測相機中...")
+        self.camera_layout.addWidget(self.detecting_label)
         control_layout.addWidget(camera_group)
 
         # 拍攝控制按鈕群組
@@ -189,15 +194,9 @@ class AutoCameraGUI(QMainWindow):
     def create_preview_panel(self):
         """創建預覽面板：2欄 Grid 的 CameraCard，包裹在 QScrollArea 中"""
         container = QWidget()
-        grid = QGridLayout(container)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-
-        for i, cam in enumerate(self.cameras):
-            card = CameraCard(cam)
-            row, col = divmod(i, PREVIEW_GRID_COLUMNS)
-            grid.addWidget(card, row, col)
-            self.camera_cards[cam] = card
+        self.preview_grid = QGridLayout(container)
+        self.preview_grid.setColumnStretch(0, 1)
+        self.preview_grid.setColumnStretch(1, 1)
 
         scroll = QScrollArea()
         scroll.setWidget(container)
@@ -208,6 +207,30 @@ class AutoCameraGUI(QMainWindow):
         path = QFileDialog.getExistingDirectory(self, "選擇存檔資料夾")
         if path:
             self.save_path_edit.setText(path)
+
+    def _detect_cameras(self):
+        self.detect_thread = CameraDetectThread(MAX_CAMERAS, self)
+        self.detect_thread.cameras_found.connect(self._on_cameras_found)
+        self.detect_thread.start()
+
+    def _on_cameras_found(self, cameras):
+        self.cameras = cameras
+        self.detecting_label.hide()
+        if not cameras:
+            self.camera_layout.addWidget(QLabel("未找到相機設備"))
+            return
+        for cam in cameras:
+            checkbox = QCheckBox(f"相機 {cam}")
+            checkbox.setChecked(True)
+            checkbox.toggled.connect(lambda checked, cam=cam: self._on_camera_checkbox_changed(cam, checked))
+            self.camera_layout.addWidget(checkbox)
+            self.camera_checkboxes.append((cam, checkbox))
+        for i, cam in enumerate(cameras):
+            card = CameraCard(cam)
+            row, col = divmod(i, PREVIEW_GRID_COLUMNS)
+            self.preview_grid.addWidget(card, row, col)
+            self.camera_cards[cam] = card
+        self.start_camera_previews()
 
     def start_camera_previews(self):
         """啟動相機預覽線程"""
@@ -553,6 +576,8 @@ class AutoCameraGUI(QMainWindow):
         self.countdown_timer.stop()
         self.capture_timeout_timer.stop()
         self.is_running = False
+        if self.detect_thread and self.detect_thread.isRunning():
+            self.detect_thread.wait(3000)
         for thread in list(self.camera_threads_by_index.values()):
             thread.stop()
             thread.wait(3000)

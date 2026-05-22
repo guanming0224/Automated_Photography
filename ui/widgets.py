@@ -70,7 +70,7 @@ class CameraCard(QWidget):
         self.preview_label.setAspectRatio(image.width(), image.height())
         pixmap = QPixmap.fromImage(image)
         self.preview_label.setPixmap(
-            pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            pixmap.scaled(self.preview_label.size(), Qt.KeepAspectRatio, Qt.FastTransformation)
         )
 
     def set_preview_waiting(self) -> None:

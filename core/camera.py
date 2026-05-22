@@ -70,7 +70,7 @@ class CameraThread(QThread):
                         original_w,
                         original_h,
                     )
-                self.msleep(30)
+                self.msleep(66)
         finally:
             if self.cap:
                 self.cap.release()
@@ -81,6 +81,7 @@ class CameraThread(QThread):
         cur_w = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)
         cur_h = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
         best_w, best_h = int(cur_w), int(cur_h)
+        exact_match = False
         for width, height in COMMON_CAMERA_RESOLUTIONS:
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
@@ -89,9 +90,11 @@ class CameraThread(QThread):
             if actual_w * actual_h > best_w * best_h:
                 best_w, best_h = actual_w, actual_h
             if actual_w == width and actual_h == height:
+                exact_match = True
                 break
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, best_w)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, best_h)
+        if not exact_match:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, best_w)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, best_h)
         return best_w, best_h
 
     def get_latest_frame(self):
