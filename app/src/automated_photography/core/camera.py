@@ -4,7 +4,7 @@ import threading
 import time
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
-from core.config import COMMON_CAMERA_RESOLUTIONS
+from automated_photography.core.config import COMMON_CAMERA_RESOLUTIONS
 
 
 def open_camera(index):

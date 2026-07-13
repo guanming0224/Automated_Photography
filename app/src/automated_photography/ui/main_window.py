@@ -6,20 +6,20 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QSpinBox, QDoubleSpinBox, QFileDialog, QSplitter,
     QGroupBox, QFormLayout, QCheckBox, QMessageBox,
-    QScrollArea, QGridLayout,
+    QScrollArea, QGridLayout, QFrame,
 )
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import QThread, QTimer, Qt, Signal
 
-from core.camera import CameraThread, find_available_cameras
-from core.config import (
+from automated_photography.core.camera import CameraThread, find_available_cameras
+from automated_photography.core.config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, CONTROL_PANEL_WIDTH, PREVIEW_PANEL_WIDTH,
     MAX_CAMERAS, DEFAULT_PHOTO_COUNT, DEFAULT_INTERVAL,
     MIN_PHOTO_COUNT, MAX_PHOTO_COUNT, MIN_INTERVAL, MAX_INTERVAL,
     DEFAULT_NAME_TEMPLATE, DEFAULT_SAVE_DIR, PREVIEW_GRID_COLUMNS, CAPTURE_TIMEOUT_MS,
     INTERVAL_STEP, COUNTDOWN_TICK_MS,
 )
-from ui.widgets import CameraCard, CircularProgressWidget
+from automated_photography.ui.widgets import CameraCard, CircularProgressWidget
 
 
 class CameraDetectThread(QThread):
@@ -127,34 +127,98 @@ class AutoCameraGUI(QMainWindow):
     def init_ui(self):
         """初始化UI"""
         central_widget = QWidget()
+        central_widget.setObjectName("AppRoot")
+        central_widget.setAttribute(Qt.WA_StyledBackground, True)
         self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(16, 16, 16, 16)
+        main_layout.setSpacing(12)
 
+        main_layout.addWidget(self.create_header())
         control_scroll = self.create_control_panel()
         preview_scroll = self.create_preview_panel()
 
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("MainSplitter")
         splitter.addWidget(control_scroll)
         splitter.addWidget(preview_scroll)
         splitter.setSizes([CONTROL_PANEL_WIDTH, PREVIEW_PANEL_WIDTH])
 
-        main_layout.addWidget(splitter)
+        main_layout.addWidget(splitter, 1)
+
+    def create_header(self):
+        """建立頂部工作台狀態列"""
+        header = QFrame()
+        header.setObjectName("HeaderBar")
+        header.setFrameShape(QFrame.Shape.NoFrame)
+
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(16, 12, 16, 12)
+        header_layout.setSpacing(12)
+
+        title_layout = QVBoxLayout()
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(2)
+
+        title = QLabel("自動拍照控制台")
+        title.setObjectName("AppTitle")
+        subtitle = QLabel("多相機影像擷取作業")
+        subtitle.setObjectName("AppSubtitle")
+
+        title_layout.addWidget(title)
+        title_layout.addWidget(subtitle)
+        header_layout.addLayout(title_layout, 1)
+
+        self.header_status_label = QLabel("相機偵測中")
+        self.header_status_label.setObjectName("HeaderBadge")
+        self.header_status_label.setProperty("status", "neutral")
+        self.header_status_label.setAlignment(Qt.AlignCenter)
+        header_layout.addWidget(self.header_status_label, 0, Qt.AlignRight | Qt.AlignVCenter)
+
+        return header
+
+    def _set_header_status(self, text: str, status: str = "neutral"):
+        if not hasattr(self, "header_status_label"):
+            return
+        self.header_status_label.setText(text)
+        self.header_status_label.setProperty("status", status)
+        self.header_status_label.style().unpolish(self.header_status_label)
+        self.header_status_label.style().polish(self.header_status_label)
+
+    def _refresh_camera_status_badge(self):
+        if not self.cameras:
+            self._set_header_status("未找到相機", "warning")
+            return
+
+        active_count = sum(1 for _, checkbox in self.camera_checkboxes if checkbox.isChecked())
+        if active_count:
+            self._set_header_status(f"啟用 {active_count}/{len(self.cameras)} 台相機", "success")
+        else:
+            self._set_header_status("未啟用相機", "warning")
 
     def create_control_panel(self):
         """創建控制面板，包裹在 QScrollArea 中"""
         control_panel = QWidget()
+        control_panel.setObjectName("ControlPanel")
+        control_panel.setAttribute(Qt.WA_StyledBackground, True)
         control_layout = QVBoxLayout(control_panel)
+        control_layout.setContentsMargins(0, 0, 10, 0)
+        control_layout.setSpacing(12)
 
         # 存檔設定
         save_group = QGroupBox("存檔設定")
         save_layout = QFormLayout(save_group)
+        save_layout.setHorizontalSpacing(10)
+        save_layout.setVerticalSpacing(12)
         self.save_path_edit = QLineEdit()
         default_save_path = os.path.join(os.path.expanduser("~"), "Desktop", DEFAULT_SAVE_DIR)
         os.makedirs(default_save_path, exist_ok=True)
         self.save_path_edit.setText(default_save_path)
         save_button = QPushButton("選擇資料夾")
+        save_button.setObjectName("BrowseButton")
         save_button.clicked.connect(self.select_save_path)
         path_row = QHBoxLayout()
+        path_row.setSpacing(8)
         path_row.addWidget(self.save_path_edit)
         path_row.addWidget(save_button)
         save_layout.addRow("存檔位置:", path_row)
@@ -165,6 +229,8 @@ class AutoCameraGUI(QMainWindow):
         # 拍攝設定
         capture_group = QGroupBox("拍攝設定")
         capture_layout = QFormLayout(capture_group)
+        capture_layout.setHorizontalSpacing(10)
+        capture_layout.setVerticalSpacing(12)
         self.photo_count_spin = QSpinBox()
         self.photo_count_spin.setRange(MIN_PHOTO_COUNT, MAX_PHOTO_COUNT)
         self.photo_count_spin.setValue(DEFAULT_PHOTO_COUNT)
@@ -183,22 +249,29 @@ class AutoCameraGUI(QMainWindow):
         # 相機選擇
         camera_group = QGroupBox("相機選擇")
         self.camera_layout = QVBoxLayout(camera_group)
+        self.camera_layout.setSpacing(8)
         self.detecting_label = QLabel("偵測相機中...")
+        self.detecting_label.setObjectName("MutedLabel")
         self.camera_layout.addWidget(self.detecting_label)
         control_layout.addWidget(camera_group)
 
         # 拍攝控制按鈕群組
         button_group = QGroupBox("拍攝控制")
         button_layout = QVBoxLayout(button_group)
+        button_layout.setSpacing(8)
         start_stop_row = QHBoxLayout()
+        start_stop_row.setSpacing(8)
         self.start_button = QPushButton("開始拍攝")
+        self.start_button.setObjectName("StartButton")
         self.start_button.clicked.connect(self.start_capture)
         self.stop_button = QPushButton("結束拍攝")
+        self.stop_button.setObjectName("StopButton")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_capture)
         start_stop_row.addWidget(self.start_button)
         start_stop_row.addWidget(self.stop_button)
         self.pause_button = QPushButton("暫停拍攝")
+        self.pause_button.setObjectName("PauseButton")
         self.pause_button.setEnabled(False)
         self.pause_button.clicked.connect(self.toggle_pause)
         button_layout.addLayout(start_stop_row)
@@ -212,6 +285,7 @@ class AutoCameraGUI(QMainWindow):
         control_layout.addStretch()
 
         scroll = QScrollArea()
+        scroll.setObjectName("ControlScroll")
         scroll.setWidget(control_panel)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -220,11 +294,17 @@ class AutoCameraGUI(QMainWindow):
     def create_preview_panel(self):
         """創建預覽面板：2欄 Grid 的 CameraCard，包裹在 QScrollArea 中"""
         container = QWidget()
+        container.setObjectName("PreviewPanel")
+        container.setAttribute(Qt.WA_StyledBackground, True)
         self.preview_grid = QGridLayout(container)
+        self.preview_grid.setContentsMargins(0, 0, 0, 0)
+        self.preview_grid.setHorizontalSpacing(12)
+        self.preview_grid.setVerticalSpacing(12)
         self.preview_grid.setColumnStretch(0, 1)
         self.preview_grid.setColumnStretch(1, 1)
 
         scroll = QScrollArea()
+        scroll.setObjectName("PreviewScroll")
         scroll.setWidget(container)
         scroll.setWidgetResizable(True)
         return scroll
@@ -243,7 +323,10 @@ class AutoCameraGUI(QMainWindow):
         self.cameras = cameras
         self.detecting_label.hide()
         if not cameras:
-            self.camera_layout.addWidget(QLabel("未找到相機設備"))
+            no_camera_label = QLabel("未找到相機設備")
+            no_camera_label.setObjectName("MutedLabel")
+            self.camera_layout.addWidget(no_camera_label)
+            self._refresh_camera_status_badge()
             return
         for cam in cameras:
             checkbox = QCheckBox(f"相機 {cam}")
@@ -256,6 +339,7 @@ class AutoCameraGUI(QMainWindow):
             row, col = divmod(i, PREVIEW_GRID_COLUMNS)
             self.preview_grid.addWidget(card, row, col)
             self.camera_cards[cam] = card
+        self._refresh_camera_status_badge()
         self.start_camera_previews()
 
     def start_camera_previews(self):
@@ -306,6 +390,7 @@ class AutoCameraGUI(QMainWindow):
             self.start_camera_preview(cam_idx)
         else:
             self.stop_camera_preview(cam_idx)
+        self._refresh_camera_status_badge()
 
     def _on_max_resolution_ready(self, camera_index: int, width: int, height: int):
         """相機執行緒完成最高解析度偵測後更新 Card"""

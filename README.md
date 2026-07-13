@@ -9,16 +9,19 @@
 
 ```
 auto_camera_gui/
-├── main.py                  # 應用主入口
+├── main.py                  # 根目錄啟動器，載入 src package
 ├── requirements.txt         # 依賴套件清單
-├── CLAUDE.md               # AI 協作說明文件
 ├── README.md               # 本文件
-├── core/
-│   ├── camera.py           # 相機執行緒、非同步拍攝邏輯
-│   └── config.py           # 所有常數集中管理
-└── ui/
-    ├── widgets.py           # 自訂元件（CameraCard、圓形進度等）
-    └── main_window.py      # 主窗口、存檔執行緒
+└── src/
+    └── automated_photography/
+        ├── main.py          # 應用主入口
+        ├── core/
+        │   ├── camera.py    # 相機執行緒、非同步拍攝邏輯
+        │   └── config.py    # 所有常數集中管理
+        └── ui/
+            ├── styles.py    # 全域 GUI 樣式
+            ├── widgets.py   # 自訂元件（CameraCard、圓形進度等）
+            └── main_window.py # 主窗口、存檔執行緒
 ```
 
 ## 功能特性
@@ -69,21 +72,21 @@ python main.py
 
 ```powershell
 # 單檔模式（方便分發）
-pyinstaller --windowed --onefile --name "自動拍照GUI" main.py
+pyinstaller --paths src --windowed --onefile --name "自動拍照GUI" main.py
 
 # 資料夾模式（啟動速度較快）
-pyinstaller --windowed --name "自動拍照GUI" main.py
+pyinstaller --paths src --windowed --name "自動拍照GUI" main.py
 ```
 
 產出在 `dist/` 資料夾。
 
 ## 模組說明
 
-### core/config.py
+### src/automated_photography/core/config.py
 所有常數集中於此，包含視窗尺寸、相機參數、UI 配色、拍攝預設值。
 需要調整任何行為數值時，從這裡改。
 
-### core/camera.py
+### src/automated_photography/core/camera.py
 
 | 類別 / 函式 | 說明 |
 |---|---|
@@ -91,7 +94,7 @@ pyinstaller --windowed --name "自動拍照GUI" main.py
 | `open_camera()` | 優先用 `CAP_DSHOW` 開啟（Windows），失敗則 fallback |
 | `find_available_cameras()` | 掃描 index 0–4，回傳可用相機清單 |
 
-### ui/widgets.py
+### src/automated_photography/ui/widgets.py
 
 | 類別 | 說明 |
 |---|---|
@@ -99,7 +102,7 @@ pyinstaller --windowed --name "自動拍照GUI" main.py
 | `CameraCard` | 單台相機卡片，含即時預覽、原始/最高解析度標籤、最後拍攝照片；尺寸標籤由 `_refresh_size_label()` 統一管理 |
 | `CircularProgressWidget` | 雙環圓形進度，外圈=拍攝進度，內圈=倒數進度；QColor 於 `__init__` 預建立 |
 
-### ui/main_window.py
+### src/automated_photography/ui/main_window.py
 
 | 類別 | 說明 |
 |---|---|

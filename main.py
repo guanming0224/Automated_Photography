@@ -1,15 +1,14 @@
-"""自動拍照GUI應用入口"""
+"""Compatibility launcher for the src-layout application."""
 import sys
-from PySide6.QtWidgets import QApplication
-from ui.main_window import AutoCameraGUI
+from pathlib import Path
 
 
-def main():
-    """應用主函數"""
-    app = QApplication(sys.argv)
-    window = AutoCameraGUI()
-    window.show()
-    sys.exit(app.exec())
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from automated_photography.main import main
 
 
 if __name__ == "__main__":
